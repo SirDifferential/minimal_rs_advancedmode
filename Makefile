@@ -14,5 +14,6 @@ $(EXECUTABLE): $(OBJECTS)
 	$(CC) $(CXXFLAGS) $(LDFLAGS) -c -o $@ $<
 
 clean:
-	rm ${EXECUTABLE}
+	rm -f *.o
+	rm -f ${EXECUTABLE}
 
