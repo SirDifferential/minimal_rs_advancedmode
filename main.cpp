@@ -229,12 +229,12 @@ int main() try {
 
         // get specific frame instances
         for (auto&& f : frames) {
-            if (f.template is<rs2::depth_frame>()) {
-                rs2::depth_frame dframe = f.template as<rs2::depth_frame>();
+            if (f.is<rs2::depth_frame>()) {
+                rs2::depth_frame dframe = f.as<rs2::depth_frame>();
                 d_width = dframe.get_width();
                 d_height = dframe.get_height();
 
-                if (d_width <= 0 || d_height <= 0) {
+                if (d_width != depth_w || d_height != depth_h) {
 
                     std::cout << "Invalid depth frame resolution: "
                         << d_width << ", " << d_height << std::endl;
@@ -252,7 +252,7 @@ int main() try {
                 c_width = cframe.get_width();
                 c_height = cframe.get_height();
 
-                if (c_width <= 0 || c_height <= 0) {
+                if (c_width != color_w || c_height != color_h) {
                     std::cout << "Invalid color frame resolution: "
                         << c_width << ", " << c_height << std::endl;
                     stop(pipeline);
