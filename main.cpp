@@ -350,8 +350,8 @@ int main() try {
 				memcpy(depthbuf, depthdata, depth_w * depth_h * sizeof(uint16_t));
 				got_depth = true;
 
-			} else if (f.template is<rs2::video_frame>()) {
-				rs2::video_frame cframe = f.template as<rs2::video_frame>();
+			} else if (f.is<rs2::video_frame>()) {
+				rs2::video_frame cframe = f.as<rs2::video_frame>();
 				c_width = cframe.get_width();
 				c_height = cframe.get_height();
 
