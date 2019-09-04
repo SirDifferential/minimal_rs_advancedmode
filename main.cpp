@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <chrono>
 #include <list>
+#include <thread>
 
 #ifdef WIN32
 #include <Windows.h>
@@ -208,6 +209,101 @@ int main() try {
     float d_width, d_height;
     float c_width, c_height;
     uint64_t frames_got = 0;
+
+	bool success = false;
+	int tries;
+    for (auto&& s : sensors) {
+        if (s.supports(RS2_OPTION_EMITTER_ENABLED)) {
+
+            // Try doing the operation a few times. Sometimes the device is "busy"
+            success = false;
+			tries = 0;
+
+            while (!success) {
+                try {
+                    s.set_option(RS2_OPTION_EMITTER_ENABLED, 1.0f);
+                    success = true;
+                } catch (const rs2::error& e) {
+					tries++;
+					if (tries > 5) {
+						std::cout << "Failed setting emitter" << std::endl;
+						stop(pipeline);
+						return 1;
+					}
+                    std::cout << "failed setting emitter, trying again" << std::endl;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                }
+            }
+
+            std::cout << "emitter enabled" << std::endl;
+        }
+
+        if (s.supports(RS2_OPTION_LASER_POWER)) {
+
+            success = false;
+			tries = 0;
+
+            while (!success) {
+                try {
+					rs2::option_range laserpower = s.get_option_range(RS2_OPTION_LASER_POWER);
+                    s.set_option(RS2_OPTION_LASER_POWER, laserpower.max);
+                    float newval = s.get_option(RS2_OPTION_LASER_POWER);
+                    if (newval != laserpower.max) {
+                        std::cout << "Failed setting max laser power" << std::endl;
+						stop(pipeline);
+                        return 1;
+                    }
+
+                    success = true;
+
+                } catch (const rs2::error& e) {
+					tries++;
+					if (tries > 5) {
+						std::cout << "Failed setting laser power" << std::endl;
+						stop(pipeline);
+						return 1;
+					}
+
+                    std::cout << "failed setting laser power, trying again" << std::endl;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                }
+            }
+
+            std::cout << "set laser power" << std::endl;
+        }
+    }
+
+    STDepthControlGroup gr;
+    gr.deepSeaSecondPeakThreshold = 575;
+    gr.deepSeaNeighborThreshold = 701;
+    gr.deepSeaMedianThreshold = 796;
+    gr.plusIncrement = 2;
+    gr.minusDecrement = 25;
+    gr.scoreThreshA = 4;
+    gr.scoreThreshB = 2893;
+    gr.lrAgreeThreshold = 10;
+    gr.textureCountThreshold = 0;
+    gr.textureDifferenceThreshold = 1722;
+
+    success = false;
+	tries = 0;
+    while (!success) {
+        try {
+            adv.set_depth_control(gr);
+            success = true;
+        } catch (const rs2::error& e) {
+			tries++;
+			if (tries > 5) {
+				std::cout << "failed setting depth control" << std::endl;
+				stop(pipeline);
+				return 1;
+			}
+
+            std::cout << "failed setting depth control, trying again" << std::endl;
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+    }
+
 
     std::cout << "entering main loop" << std::endl;
 
