@@ -33,10 +33,10 @@ const char* presets[PRESET_COUNT] = {
 };
 
 bool got_sigint = false;
-const int color_w = 1920;
-const int color_h = 1080;
-const int depth_w = 1280;
-const int depth_h = 720;
+const int color_w = 960;
+const int color_h = 540;
+const int depth_w = 640;
+const int depth_h = 480;
 
 /**
  * Wrapper to call delete or delete[] on dtor
@@ -202,10 +202,6 @@ int main() try {
 
 	std::cout << "streams enabled" << std::endl;
 
-	// Configure and start the pipeline
-	rs2::pipeline_profile prof = pipeline.start(conf);
-	std::cout << "pipeline started" << std::endl;
-
 	float d_width, d_height;
 	float c_width, c_height;
 	uint64_t frames_got = 0;
@@ -221,6 +217,7 @@ int main() try {
 
 			while (!success) {
 				try {
+					std::cout << "set emitter enabled" << std::endl;
 					s.set_option(RS2_OPTION_EMITTER_ENABLED, 1.0f);
 					success = true;
 				} catch (const rs2::error& e) {
@@ -248,8 +245,13 @@ int main() try {
 
 			while (!success) {
 				try {
+					std::cout << "get laser power range" << std::endl;
 					rs2::option_range laserpower = s.get_option_range(RS2_OPTION_LASER_POWER);
+
+					std::cout << "set laser power" << std::endl;
 					s.set_option(RS2_OPTION_LASER_POWER, laserpower.max);
+
+					std::cout << "get laser power" << std::endl;
 					float newval = s.get_option(RS2_OPTION_LASER_POWER);
 					if (newval != laserpower.max) {
 						std::cout << "Failed setting max laser power" << std::endl;
@@ -294,6 +296,7 @@ int main() try {
 	tries = 0;
 	while (!success) {
 		try {
+			std::cout << "set depth control" << std::endl;
 			adv.set_depth_control(gr);
 			success = true;
 		} catch (const rs2::error& e) {
@@ -312,18 +315,26 @@ int main() try {
 	}
 
 
+	// Configure and start the pipeline
+	rs2::pipeline_profile prof = pipeline.start(conf);
+	std::cout << "pipeline started" << std::endl;
+
 	std::cout << "entering main loop" << std::endl;
 
 	std::list<int> ftimes;
 	int dur_sum = 0;
 
-	while (true)
-	{
+	std::chrono::high_resolution_clock::time_point t_since_toggle = std::chrono::high_resolution_clock::now();
+	int64_t next_toggle = 3000;
+
+	while (true) {
+
 		std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
 		if (got_sigint) {
 			break;
 		}
+
 		// Block program until frames arrive
 		rs2::frameset frames = pipeline.wait_for_frames(3000);
 
@@ -375,22 +386,74 @@ int main() try {
 
 		frames_got++;
 
-		// calculate frame time
 		std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-		auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
-		if (dur == 0) {
-			dur = 1;
+		auto toggle = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t_since_toggle).count();
+
+		if (toggle > next_toggle) {
+
+			t_since_toggle = t2;
+			next_toggle = next_toggle + 10000;
+
+			for (auto& s : sensors) {
+				try {
+					rs2::roi_sensor rois(s);
+					rs2::region_of_interest ri;
+					ri.min_x = depth_w*0.4f;
+					ri.max_x = depth_w*0.6f;
+					ri.min_y = depth_h*0.4f;
+					ri.max_y = depth_h*0.6f;
+					std::cout << "Set region of interest" << std::endl;
+					rois.set_region_of_interest(ri);
+
+					std::cout << "Setting auto exposure off" << std::endl;
+					if (s.supports(RS2_OPTION_ENABLE_AUTO_EXPOSURE)) {
+						s.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 0.0f);
+					}
+				} catch (const rs2::error& e) {
+					std::cout << "RealSense error calling " << e.get_failed_function()
+						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
+						" when toggling device auto exposure settings." << std::endl;
+				}
+
+				try {
+					std::cout << "Enabling emitter" << std::endl;
+					if (s.supports(RS2_OPTION_EMITTER_ENABLED)) {
+						s.set_option(RS2_OPTION_EMITTER_ENABLED, 1.0f);
+					}
+				} catch (const rs2::error& e) {
+					std::cout << "RealSense error calling " << e.get_failed_function()
+						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
+						" when enabling emitter." << std::endl;
+				}
+
+				try {
+					if (s.supports(RS2_OPTION_ENABLE_AUTO_EXPOSURE)) {
+						std::cout << "re-enable auto exposure" << std::endl;
+						s.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 1.0f);
+					}
+				} catch (const rs2::error& e) {
+					std::cout << "RealSense error calling " << e.get_failed_function()
+						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
+						" when toggling device auto exposure settings." << std::endl;
+				}
+			}
+		}
+
+		// calculate frame time
+		auto dur_frame = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+		if (dur_frame == 0) {
+			dur_frame = 1;
 		}
 
 		// calculate average fps
-		ftimes.push_back(dur);
+		ftimes.push_back(dur_frame);
 
 		if (ftimes.size() > 100) {
 			dur_sum -= ftimes.front();
 			ftimes.pop_front();
 		}
 
-		dur_sum += dur;
+		dur_sum += dur_frame;
 		int avg_dur = dur_sum / ftimes.size();
 
 		if (dur_sum == 0) {
@@ -399,7 +462,7 @@ int main() try {
 
 		int avg_fps = 1000 / avg_dur;
 
-		std::cout << "Finished frame " << frames_got << " in " << dur
+		std::cout << "Finished frame " << frames_got << " in " << dur_frame
 			<< " milliseconds (" << avg_fps << " fps)" << std::endl;
 	}
 

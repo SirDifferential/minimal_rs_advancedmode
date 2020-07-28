@@ -1,6 +1,6 @@
 CC=g++
 CXXFLAGS=-std=c++11 -g -I/home/gekko/librealsense/include -fsanitize=address -fstack-protector-all
-LDFLAGS=-L/home/gekko/librealsense/build_debug_libuvc -lrealsense2 -latomic
+LDFLAGS=-L/home/gekko/librealsense/build -lrealsense2 -latomic
 SOURCES=main.cpp
 OBJECTS=$(SOURCES:.cpp=.o)
 EXECUTABLE=minimal_realsense_advancedmode
