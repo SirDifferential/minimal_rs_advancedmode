@@ -1,9 +1,6 @@
 ﻿/**
- * Minimal C++ program that utilizes Realsense D400 devices and streams their
- * depth and color streams. This program also enables a visual preset mode which
- * can be useful to make sure the installed librealsense SDK, kernel and libraries
- * work properly as the advanced mode seems to be a feature that fails to work
- * properly on some systems.
+ * Minimal program to open a D415/D435 sensor with specific settings, then toggle
+ * its auto exposure and region of interest settings at runtime.
  *
  * To keep the code smaller and capable of running on minimal systems, no GUI
  * is used at all.
@@ -25,12 +22,8 @@
 #include <librealsense2/rs.hpp>
 #include <librealsense2/rs_advanced_mode.hpp>
 
-#define PRESET_COUNT 3
-const char* presets[PRESET_COUNT] = {
-	"High Accuracy",
-	"High Density",
-	"Hand"
-};
+// Contains a long JSON string specifying camera settings
+#include "realsensesettings.h"
 
 bool got_sigint = false;
 const int color_w = 960;
@@ -99,9 +92,6 @@ int main() try {
 	signal(SIGINT, sigint_handler);
 #endif
 
-	const char* desired_preset = presets[0];
-	size_t preset_strlen = strnlen(desired_preset, 15);
-
 	// allocate buffers for reading color and depth frames
 	unsigned char* colorbuf = new unsigned char[color_w * color_h * 3];
 	if (colorbuf == NULL) {
@@ -155,42 +145,13 @@ int main() try {
 		std::cout << "advanced mode is already enabled" << std::endl;
 	}
 
-	// Enable desired preset
-	bool enabled_preset = false;
-	std::cout << "Enabling preset " << desired_preset << std::endl;
-
-	for (auto&& s : sensors) {
-		if (s.supports(RS2_OPTION_VISUAL_PRESET)) {
-
-			// See if the preset is already in use
-			float pres = s.get_option(RS2_OPTION_VISUAL_PRESET);
-			const char* cur_desc = s.get_option_value_description(RS2_OPTION_VISUAL_PRESET, pres);
-			if (strncmp(cur_desc, desired_preset, preset_strlen) == 0) {
-				std::cout << "already using desired preset" << std::endl;
-				enabled_preset = true;
-				break;
-			}
-
-			rs2::option_range r = s.get_option_range(RS2_OPTION_VISUAL_PRESET);
-
-			// Go through all available presets and find the proper index to enable
-			for (int i = (int)r.min; i < (int)r.max; ++i) {
-				const char* desc = s.get_option_value_description(RS2_OPTION_VISUAL_PRESET, i);
-				if (strncmp(desc, desired_preset, preset_strlen) == 0) {
-					s.set_option(RS2_OPTION_VISUAL_PRESET, i);
-					enabled_preset = true;
-					std::cout << "Enabled desired preset" << std::endl;
-					break;
-				}
-			}
-
-			break;
-		}
-	}
-
-	if (enabled_preset == false) {
-		std::cout << "Did not find sensor that supports visual preset option" << std::endl;
-		return 1;
+	try {
+		// This variable is in an external file due to it being a very long string
+		adv.load_json(realsense_advanced_settings_json);
+	} catch (const rs2::error& e) {
+		std::cout << "RealSense error calling " << e.get_failed_function()
+			<< "(" << e.get_failed_args() << "):\n " << e.what() <<
+			" when loading settings JSON." << std::endl;
 	}
 
 	// Enable max resolution streams
@@ -202,118 +163,7 @@ int main() try {
 
 	std::cout << "streams enabled" << std::endl;
 
-	float d_width, d_height;
-	float c_width, c_height;
 	uint64_t frames_got = 0;
-
-	bool success = false;
-	int tries;
-	for (auto&& s : sensors) {
-		if (s.supports(RS2_OPTION_EMITTER_ENABLED)) {
-
-			// Try doing the operation a few times. Sometimes the device is "busy"
-			success = false;
-			tries = 0;
-
-			while (!success) {
-				try {
-					std::cout << "set emitter enabled" << std::endl;
-					s.set_option(RS2_OPTION_EMITTER_ENABLED, 1.0f);
-					success = true;
-				} catch (const rs2::error& e) {
-					tries++;
-					if (tries > 5) {
-						std::cout << "Failed setting emitter" << std::endl;
-						stop(pipeline);
-						return 1;
-					}
-					std::cout << "failed setting emitter, trying again" << std::endl;
-					std::cout << "RealSense error calling " << e.get_failed_function()
-						<< "(" << e.get_failed_args() << "):\n	  " << e.what() << std::endl;
-
-					std::this_thread::sleep_for(std::chrono::milliseconds(200));
-				}
-			}
-
-			std::cout << "emitter enabled" << std::endl;
-		}
-
-		if (s.supports(RS2_OPTION_LASER_POWER)) {
-
-			success = false;
-			tries = 0;
-
-			while (!success) {
-				try {
-					std::cout << "get laser power range" << std::endl;
-					rs2::option_range laserpower = s.get_option_range(RS2_OPTION_LASER_POWER);
-
-					std::cout << "set laser power" << std::endl;
-					s.set_option(RS2_OPTION_LASER_POWER, laserpower.max);
-
-					std::cout << "get laser power" << std::endl;
-					float newval = s.get_option(RS2_OPTION_LASER_POWER);
-					if (newval != laserpower.max) {
-						std::cout << "Failed setting max laser power" << std::endl;
-						stop(pipeline);
-						return 1;
-					}
-
-					success = true;
-
-				} catch (const rs2::error& e) {
-					tries++;
-					if (tries > 5) {
-						std::cout << "Failed setting laser power" << std::endl;
-						stop(pipeline);
-						return 1;
-					}
-
-					std::cout << "failed setting laser power, trying again" << std::endl;
-					std::cout << "RealSense error calling " << e.get_failed_function()
-						<< "(" << e.get_failed_args() << "):\n	  " << e.what() << std::endl;
-					std::this_thread::sleep_for(std::chrono::milliseconds(200));
-				}
-			}
-
-			std::cout << "set laser power" << std::endl;
-		}
-	}
-
-	STDepthControlGroup gr;
-	gr.deepSeaSecondPeakThreshold = 575;
-	gr.deepSeaNeighborThreshold = 701;
-	gr.deepSeaMedianThreshold = 796;
-	gr.plusIncrement = 2;
-	gr.minusDecrement = 25;
-	gr.scoreThreshA = 4;
-	gr.scoreThreshB = 2893;
-	gr.lrAgreeThreshold = 10;
-	gr.textureCountThreshold = 0;
-	gr.textureDifferenceThreshold = 1722;
-
-	success = false;
-	tries = 0;
-	while (!success) {
-		try {
-			std::cout << "set depth control" << std::endl;
-			adv.set_depth_control(gr);
-			success = true;
-		} catch (const rs2::error& e) {
-			tries++;
-			if (tries > 5) {
-				std::cout << "failed setting depth control" << std::endl;
-				stop(pipeline);
-				return 1;
-			}
-
-			std::cout << "failed setting depth control, trying again" << std::endl;
-			std::cout << "RealSense error calling " << e.get_failed_function()
-				<< "(" << e.get_failed_args() << "):\n	  " << e.what() << std::endl;
-			std::this_thread::sleep_for(std::chrono::milliseconds(200));
-		}
-	}
-
 
 	// Configure and start the pipeline
 	rs2::pipeline_profile prof = pipeline.start(conf);
@@ -345,8 +195,8 @@ int main() try {
 		for (auto&& f : frames) {
 			if (f.is<rs2::depth_frame>()) {
 				rs2::depth_frame dframe = f.as<rs2::depth_frame>();
-				d_width = dframe.get_width();
-				d_height = dframe.get_height();
+				int d_width = dframe.get_width();
+				int d_height = dframe.get_height();
 
 				if (d_width != depth_w || d_height != depth_h) {
 
@@ -363,8 +213,8 @@ int main() try {
 
 			} else if (f.is<rs2::video_frame>()) {
 				rs2::video_frame cframe = f.as<rs2::video_frame>();
-				c_width = cframe.get_width();
-				c_height = cframe.get_height();
+				int c_width = cframe.get_width();
+				int c_height = cframe.get_height();
 
 				if (c_width != color_w || c_height != color_h) {
 					std::cout << "Invalid color frame resolution: "
@@ -391,50 +241,73 @@ int main() try {
 
 		if (toggle > next_toggle) {
 
+			// Disable auto exposure, re-enable it, specify region of interest
 			t_since_toggle = t2;
 			next_toggle = next_toggle + 10000;
 
 			for (auto& s : sensors) {
-				try {
-					rs2::roi_sensor rois(s);
-					rs2::region_of_interest ri;
-					ri.min_x = depth_w*0.4f;
-					ri.max_x = depth_w*0.6f;
-					ri.min_y = depth_h*0.4f;
-					ri.max_y = depth_h*0.6f;
-					std::cout << "Set region of interest" << std::endl;
-					rois.set_region_of_interest(ri);
 
-					std::cout << "Setting auto exposure off" << std::endl;
-					if (s.supports(RS2_OPTION_ENABLE_AUTO_EXPOSURE)) {
+				if (!s.supports(RS2_OPTION_ENABLE_AUTO_EXPOSURE) ||
+					!s.supports(RS2_OPTION_EMITTER_ENABLED)) {
+					continue;
+				}
+
+				try {
+					float aexp = s.get_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE);
+					if (aexp != 0.f) {
+						std::cout << "Setting auto exposure off" << std::endl;
 						s.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 0.0f);
+						std::this_thread::sleep_for(std::chrono::seconds(1));
 					}
 				} catch (const rs2::error& e) {
 					std::cout << "RealSense error calling " << e.get_failed_function()
 						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
 						" when toggling device auto exposure settings." << std::endl;
+				}
+
+				try {
+					std::cout << "Setting auto exposure on" << std::endl;
+					s.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 1.0f);
+					std::this_thread::sleep_for(std::chrono::seconds(3));
+				} catch (const rs2::error& e) {
+					std::cout << "RealSense error calling " << e.get_failed_function()
+						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
+						" when toggling device auto exposure settings." << std::endl;
+				}
+
+				if (s.is<rs2::roi_sensor>()) {
+					try {
+
+						float aexp = s.get_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE);
+						std::cout << "auto exposure: " << aexp << std::endl;
+						if (aexp == 0.0f) {
+							std::cout << "Cannot set ROI: auto exposure failed to re-enable" << std::endl;
+							continue;
+						}
+
+						rs2::region_of_interest ri;
+						ri.min_x = depth_w*0.4f;
+						ri.max_x = depth_w*0.6f;
+						ri.min_y = depth_h*0.4f;
+						ri.max_y = depth_h*0.6f;
+						std::cout << "Set region of interest" << std::endl;
+						s.as<rs2::roi_sensor>().set_region_of_interest(ri);
+						std::this_thread::sleep_for(std::chrono::seconds(1));
+					} catch (const rs2::error& e) {
+						std::cout << "RealSense error calling " << e.get_failed_function()
+							<< "(" << e.get_failed_args() << "):\n " << e.what() <<
+							" when setting auto exposure region of interest." << std::endl;
+					}
 				}
 
 				try {
 					std::cout << "Enabling emitter" << std::endl;
-					if (s.supports(RS2_OPTION_EMITTER_ENABLED)) {
-						s.set_option(RS2_OPTION_EMITTER_ENABLED, 1.0f);
-					}
+					s.set_option(RS2_OPTION_EMITTER_ENABLED, 1.0f);
+					std::this_thread::sleep_for(std::chrono::seconds(1));
 				} catch (const rs2::error& e) {
 					std::cout << "RealSense error calling " << e.get_failed_function()
 						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
 						" when enabling emitter." << std::endl;
-				}
-
-				try {
-					if (s.supports(RS2_OPTION_ENABLE_AUTO_EXPOSURE)) {
-						std::cout << "re-enable auto exposure" << std::endl;
-						s.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 1.0f);
-					}
-				} catch (const rs2::error& e) {
-					std::cout << "RealSense error calling " << e.get_failed_function()
-						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
-						" when toggling device auto exposure settings." << std::endl;
 				}
 			}
 		}
