@@ -247,22 +247,34 @@ int main() try {
 
 			for (auto& s : sensors) {
 
-				if (!s.supports(RS2_OPTION_ENABLE_AUTO_EXPOSURE) ||
-					!s.supports(RS2_OPTION_EMITTER_ENABLED)) {
-					continue;
-				}
-
 				try {
-					float aexp = s.get_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE);
-					if (aexp != 0.f) {
-						std::cout << "Setting auto exposure off" << std::endl;
-						s.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 0.0f);
-						std::this_thread::sleep_for(std::chrono::seconds(1));
+					if (!s.supports(RS2_OPTION_ENABLE_AUTO_EXPOSURE) ||
+						!s.supports(RS2_OPTION_EMITTER_ENABLED) ||
+						!s.is<rs2::roi_sensor>()) {
+						continue;
 					}
 				} catch (const rs2::error& e) {
 					std::cout << "RealSense error calling " << e.get_failed_function()
 						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
-						" when toggling device auto exposure settings." << std::endl;
+						" when testing if sensor is depth sensor." << std::endl;
+					continue;
+				}
+
+				try {
+					std::cout << "Getting auto exposure state (1)" << std::endl;
+					float aexp = s.get_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE);
+
+					if (aexp != 0.f) {
+						std::cout << "Setting auto exposure off" << std::endl;
+						s.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 0.0f);
+						std::this_thread::sleep_for(std::chrono::seconds(3));
+					} else {
+						std::cout << "Auto exposure is already off, no need to disable: " << aexp << std::endl;
+					}
+				} catch (const rs2::error& e) {
+					std::cout << "RealSense error calling " << e.get_failed_function()
+						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
+						" when disabling auto exposure." << std::endl;
 				}
 
 				try {
@@ -275,29 +287,28 @@ int main() try {
 						" when toggling device auto exposure settings." << std::endl;
 				}
 
-				if (s.is<rs2::roi_sensor>()) {
-					try {
-
-						float aexp = s.get_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE);
-						std::cout << "auto exposure: " << aexp << std::endl;
-						if (aexp == 0.0f) {
-							std::cout << "Cannot set ROI: auto exposure failed to re-enable" << std::endl;
-							continue;
-						}
-
-						rs2::region_of_interest ri;
-						ri.min_x = depth_w*0.4f;
-						ri.max_x = depth_w*0.6f;
-						ri.min_y = depth_h*0.4f;
-						ri.max_y = depth_h*0.6f;
-						std::cout << "Set region of interest" << std::endl;
-						s.as<rs2::roi_sensor>().set_region_of_interest(ri);
-						std::this_thread::sleep_for(std::chrono::seconds(1));
-					} catch (const rs2::error& e) {
-						std::cout << "RealSense error calling " << e.get_failed_function()
-							<< "(" << e.get_failed_args() << "):\n " << e.what() <<
-							" when setting auto exposure region of interest." << std::endl;
+				try {
+					std::cout << "Getting auto exposure state (2)" << std::endl;
+					float aexp = s.get_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE);
+					std::cout << "auto exposure value before ROI request: " << aexp << std::endl;
+					if (aexp == 0.0f) {
+						std::cout << "Cannot set ROI: auto exposure failed to re-enable" << std::endl;
+						continue;
 					}
+
+					rs2::region_of_interest ri;
+					ri.min_x = depth_w*0.4f;
+					ri.max_x = depth_w*0.6f;
+					ri.min_y = depth_h*0.4f;
+					ri.max_y = depth_h*0.6f;
+
+					std::cout << "Set region of interest" << std::endl;
+					s.as<rs2::roi_sensor>().set_region_of_interest(ri);
+					std::this_thread::sleep_for(std::chrono::seconds(1));
+				} catch (const rs2::error& e) {
+					std::cout << "RealSense error calling " << e.get_failed_function()
+						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
+						" when setting auto exposure region of interest." << std::endl;
 				}
 
 				try {
@@ -345,13 +356,12 @@ int main() try {
 	std::cout << "pipeline stopped" << std::endl;
 
 	return 0;
-}
-catch (const rs2::error & e) {
-	std::cerr << "RealSense error calling " << e.get_failed_function()
+} catch (const rs2::error & e) {
+	std::cerr << "main exception handler: RealSense error calling " << e.get_failed_function()
 		<< "(" << e.get_failed_args() << "):\n	  " << e.what() << std::endl;
 	return 1;
-}
-catch (const std::exception& e) {
+} catch (const std::exception& e) {
 	std::cerr << "Unspecified exception: " << e.what() << std::endl;
 	return 1;
 }
+
