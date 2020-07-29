@@ -251,8 +251,11 @@ int main() try {
 					if (!s.supports(RS2_OPTION_ENABLE_AUTO_EXPOSURE) ||
 						!s.supports(RS2_OPTION_EMITTER_ENABLED) ||
 						!s.is<rs2::roi_sensor>()) {
+						std::cout << "Not a depth sensor, continuing" << std::endl;
 						continue;
 					}
+
+					std::cout << "Found a depth sensor" << std::endl;
 				} catch (const rs2::error& e) {
 					std::cout << "RealSense error calling " << e.get_failed_function()
 						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
