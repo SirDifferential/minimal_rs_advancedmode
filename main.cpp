@@ -169,6 +169,14 @@ int main() try {
 	rs2::pipeline_profile prof = pipeline.start(conf);
 	std::cout << "pipeline started" << std::endl;
 
+	// As per https://github.com/IntelRealSense/librealsense/issues/9157
+	// controlling some depth / color sensor settings is not possible with RSUSB backend
+	// without retrieving new pointers after starting the pipeline
+	auto dev2 = prof.get_device();
+	std::unique_ptr<rs2::depth_sensor> depthSensor;
+
+	depthSensor.reset(new rs2::depth_sensor(dev2.first<rs2::depth_sensor>()));
+
 	std::cout << "entering main loop" << std::endl;
 
 	std::list<int> ftimes;
@@ -245,124 +253,121 @@ int main() try {
 			t_since_toggle = t2;
 			next_toggle = next_toggle + 10000;
 
-			for (auto& s : sensors) {
+			try {
+				if (!depthSensor->supports(RS2_OPTION_ENABLE_AUTO_EXPOSURE) ||
+					!depthSensor->supports(RS2_OPTION_EMITTER_ENABLED) ||
+					!depthSensor->is<rs2::roi_sensor>()) {
+					continue;
+				}
+			} catch (const rs2::error& e) {
+				std::cout << "RealSense error calling " << e.get_failed_function()
+					<< "(" << e.get_failed_args() << "):\n " << e.what() <<
+					" when testing if sensor is depth sensor." << std::endl;
+				continue;
+			}
+
+			int tries = 0;
+			bool success = false;
+
+			while (tries < 10 && success == false) {
+
+				std::this_thread::sleep_for(std::chrono::milliseconds(33));
+				tries++;
 
 				try {
-					if (!s.supports(RS2_OPTION_ENABLE_AUTO_EXPOSURE) ||
-						!s.supports(RS2_OPTION_EMITTER_ENABLED) ||
-						!s.is<rs2::roi_sensor>()) {
-						continue;
+					std::cout << "Getting auto exposure state (1)" << std::endl;
+					float aexp = depthSensor->get_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE);
+
+					if (aexp != 0.f) {
+						std::cout << "Setting auto exposure off" << std::endl;
+						depthSensor->set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 0.0f);
+						std::cout << "successfully disabled auto exposure" << std::endl;
+						std::this_thread::sleep_for(std::chrono::seconds(3));
+					} else {
+						std::cout << "Auto exposure is already off, no need to disable: " << aexp << std::endl;
 					}
+					success = true;
 				} catch (const rs2::error& e) {
 					std::cout << "RealSense error calling " << e.get_failed_function()
 						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
-						" when testing if sensor is depth sensor." << std::endl;
-					continue;
+						" when disabling auto exposure." << std::endl;
 				}
+			}
 
-				int tries = 0;
-				bool success = false;
+			tries = 0;
+			success = false;
 
-				while (tries < 10 && success == false) {
+			while (tries < 10 && success == false) {
 
-					std::this_thread::sleep_for(std::chrono::milliseconds(33));
-					tries++;
+				std::this_thread::sleep_for(std::chrono::milliseconds(33));
+				tries++;
 
-					try {
-						std::cout << "Getting auto exposure state (1)" << std::endl;
-						float aexp = s.get_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE);
-
-						if (aexp != 0.f) {
-							std::cout << "Setting auto exposure off" << std::endl;
-							s.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 0.0f);
-							std::cout << "successfully disabled auto exposure" << std::endl;
-							std::this_thread::sleep_for(std::chrono::seconds(3));
-						} else {
-							std::cout << "Auto exposure is already off, no need to disable: " << aexp << std::endl;
-						}
-						success = true;
-					} catch (const rs2::error& e) {
-						std::cout << "RealSense error calling " << e.get_failed_function()
-							<< "(" << e.get_failed_args() << "):\n " << e.what() <<
-							" when disabling auto exposure." << std::endl;
-					}
+				try {
+					std::cout << "Setting auto exposure on" << std::endl;
+					depthSensor->set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 1.0f);
+					std::cout << "success setting auto exposure on" << std::endl;
+					success = true;
+					std::this_thread::sleep_for(std::chrono::seconds(3));
+				} catch (const rs2::error& e) {
+					std::cout << "RealSense error calling " << e.get_failed_function()
+						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
+						" when toggling device auto exposure settings." << std::endl;
 				}
+			}
 
-				tries = 0;
-				success = false;
+			tries = 0;
+			success = false;
 
-				while (tries < 10 && success == false) {
+			while (tries < 10 && success == false) {
 
-					std::this_thread::sleep_for(std::chrono::milliseconds(33));
-					tries++;
+				std::this_thread::sleep_for(std::chrono::milliseconds(33));
+				tries++;
 
-					try {
-						std::cout << "Setting auto exposure on" << std::endl;
-						s.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 1.0f);
-						std::cout << "success setting auto exposure on" << std::endl;
-						success = true;
-						std::this_thread::sleep_for(std::chrono::seconds(3));
-					} catch (const rs2::error& e) {
-						std::cout << "RealSense error calling " << e.get_failed_function()
-							<< "(" << e.get_failed_args() << "):\n " << e.what() <<
-							" when toggling device auto exposure settings." << std::endl;
+				try {
+					std::cout << "Getting auto exposure state (2)" << std::endl;
+					float aexp = depthSensor->get_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE);
+					std::cout << "auto exposure value before ROI request: " << aexp << std::endl;
+					if (aexp == 0.0f) {
+						std::cout << "Cannot set ROI: auto exposure failed to re-enable" << std::endl;
+						continue;
 					}
+
+					rs2::region_of_interest ri;
+					ri.min_x = depth_w*0.4f;
+					ri.max_x = depth_w*0.6f;
+					ri.min_y = depth_h*0.4f;
+					ri.max_y = depth_h*0.6f;
+
+					std::cout << "Set region of interest" << std::endl;
+					depthSensor->as<rs2::roi_sensor>().set_region_of_interest(ri);
+					success = true;
+					std::cout << "success setting region of interest" << std::endl;
+					std::this_thread::sleep_for(std::chrono::seconds(1));
+				} catch (const rs2::error& e) {
+					std::cout << "RealSense error calling " << e.get_failed_function()
+						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
+						" when setting auto exposure region of interest." << std::endl;
 				}
+			}
 
-				tries = 0;
-				success = false;
+			tries = 0;
+			success = false;
 
-				while (tries < 10 && success == false) {
+			while (tries < 10 && success == false) {
 
-					std::this_thread::sleep_for(std::chrono::milliseconds(33));
-					tries++;
+				std::this_thread::sleep_for(std::chrono::milliseconds(33));
+				tries++;
 
-					try {
-						std::cout << "Getting auto exposure state (2)" << std::endl;
-						float aexp = s.get_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE);
-						std::cout << "auto exposure value before ROI request: " << aexp << std::endl;
-						if (aexp == 0.0f) {
-							std::cout << "Cannot set ROI: auto exposure failed to re-enable" << std::endl;
-							continue;
-						}
-
-						rs2::region_of_interest ri;
-						ri.min_x = depth_w*0.4f;
-						ri.max_x = depth_w*0.6f;
-						ri.min_y = depth_h*0.4f;
-						ri.max_y = depth_h*0.6f;
-
-						std::cout << "Set region of interest" << std::endl;
-						s.as<rs2::roi_sensor>().set_region_of_interest(ri);
-						success = true;
-						std::cout << "success setting region of interest" << std::endl;
-						std::this_thread::sleep_for(std::chrono::seconds(1));
-					} catch (const rs2::error& e) {
-						std::cout << "RealSense error calling " << e.get_failed_function()
-							<< "(" << e.get_failed_args() << "):\n " << e.what() <<
-							" when setting auto exposure region of interest." << std::endl;
-					}
-				}
-
-				tries = 0;
-				success = false;
-
-				while (tries < 10 && success == false) {
-
-					std::this_thread::sleep_for(std::chrono::milliseconds(33));
-					tries++;
-
-					try {
-						std::cout << "Enabling emitter" << std::endl;
-						s.set_option(RS2_OPTION_EMITTER_ENABLED, 1.0f);
-						success = true;
-						std::cout << "success enabling emitter" << std::endl;
-						std::this_thread::sleep_for(std::chrono::seconds(1));
-					} catch (const rs2::error& e) {
-						std::cout << "RealSense error calling " << e.get_failed_function()
-							<< "(" << e.get_failed_args() << "):\n " << e.what() <<
-						" when enabling emitter." << std::endl;
-					}
+				try {
+					std::cout << "Enabling emitter" << std::endl;
+					depthSensor->set_option(RS2_OPTION_EMITTER_ENABLED, 1.0f);
+					success = true;
+					std::cout << "success enabling emitter" << std::endl;
+					std::this_thread::sleep_for(std::chrono::seconds(1));
+				} catch (const rs2::error& e) {
+					std::cout << "RealSense error calling " << e.get_failed_function()
+						<< "(" << e.get_failed_args() << "):\n " << e.what() <<
+					" when enabling emitter." << std::endl;
 				}
 			}
 		}
